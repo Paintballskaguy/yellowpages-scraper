@@ -1,47 +1,39 @@
-#!/usr/bin/env python
-# -*- coding: utf-8 -*-
-
 import requests
 from lxml import html
 import unicodecsv as csv
 import argparse
 
-
-def parse_listing(keyword, place):
+def parse_listing(keyword, place, max_pages=10):
     """
-
-    Function to process yellowpage listing page
-    : param keyword: search query
-    : param place : place name
-
+    Function to process Yellow Pages listing pages with pagination
+    :param keyword: search query
+    :param place: place name
+    :param max_pages: maximum number of pages to scrape
     """
-    url = "https://www.yellowpages.com/search?search_terms={0}&geo_location_terms={1}".format(keyword, place)
+    base_url = "https://www.yellowpages.com/search?search_terms={0}&geo_location_terms={1}&page={2}"
+    headers = {
+        'User-Agent': 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/64.0.3282.140 Safari/537.36'
+    }
 
-    print("retrieving ", url)
+    scraped_results = []
 
-    headers = {'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,image/apng,*/*;q=0.8',
-               'Accept-Encoding': 'gzip, deflate, br',
-               'Accept-Language': 'en-GB,en;q=0.9,en-US;q=0.8,ml;q=0.7',
-               'Cache-Control': 'max-age=0',
-               'Connection': 'keep-alive',
-               'Host': 'www.yellowpages.com',
-               'Upgrade-Insecure-Requests': '1',
-               'User-Agent': 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/64.0.3282.140 Safari/537.36'
-               }
-    # Adding retries
-    for retry in range(10):
+    for page in range(1, max_pages + 1):
+        url = base_url.format(keyword, place, page)
+        print("Retrieving page:", page, url)
+
         try:
             response = requests.get(url, verify=False, headers=headers)
-            print("parsing page")
             if response.status_code == 200:
                 parser = html.fromstring(response.text)
-                # making links absolute
-                base_url = "https://www.yellowpages.com"
-                parser.make_links_absolute(base_url)
+                # Absolute URL for relative links
+                parser.make_links_absolute("https://www.yellowpages.com")
 
                 XPATH_LISTINGS = "//div[@class='search-results organic']//div[@class='v-card']"
                 listings = parser.xpath(XPATH_LISTINGS)
-                scraped_results = []
+
+                if not listings:
+                    print("No more listings found. Exiting.")
+                    break
 
                 for results in listings:
                     XPATH_BUSINESS_NAME = ".//a[@class='business-name']//text()"
@@ -63,7 +55,6 @@ def parse_listing(keyword, place):
                     raw_categories = results.xpath(XPATH_CATEGORIES)
                     raw_website = results.xpath(XPATH_WEBSITE)
                     raw_rating = results.xpath(XPATH_RATING)
-                    # address = results.xpath(XPATH_ADDRESS)
                     raw_street = results.xpath(XPATH_STREET)
                     raw_locality = results.xpath(XPATH_LOCALITY)
                     raw_region = results.xpath(XPATH_REGION)
@@ -98,36 +89,33 @@ def parse_listing(keyword, place):
                     }
                     scraped_results.append(business_details)
 
-                return scraped_results
-
-            elif response.status_code == 404:
-                print("Could not find a location matching", place)
-                # no need to retry for non existing page
-                break
             else:
-                print("Failed to process page")
-                return []
+                print("Page retrieval failed with status:", response.status_code)
+                break  # Exit if page retrieval fails
 
-        except:
-            print("Failed to process page")
-            return []
+        except Exception as e:
+            print("Error retrieving page:", e)
+            break  # Exit loop on error
 
+    return scraped_results
 
 if __name__ == "__main__":
-
     argparser = argparse.ArgumentParser()
     argparser.add_argument('keyword', help='Search Keyword')
     argparser.add_argument('place', help='Place Name')
+    argparser.add_argument('--pages', type=int, default=10, help='Max number of pages to scrape')
 
     args = argparser.parse_args()
     keyword = args.keyword
     place = args.place
+    max_pages = args.pages
 
-    scraped_data = parse_listing(keyword, place)
+    scraped_data = parse_listing(keyword, place, max_pages)
 
     if scraped_data:
-        print("Writing scraped data to %s-%s-yellowpages-scraped-data.csv" % (keyword, place))
-        with open('%s-%s-yellowpages-scraped-data.csv' % (keyword, place), 'wb') as csvfile:
+        filename = f"{keyword}-{place}-yellowpages-scraped-data.csv"
+        print(f"Writing scraped data to {filename}")
+        with open(filename, 'wb') as csvfile:
             fieldnames = ['rank', 'business_name', 'telephone', 'business_page', 'category', 'website', 'rating',
                           'street', 'locality', 'region', 'zipcode', 'listing_url']
             writer = csv.DictWriter(csvfile, fieldnames=fieldnames, quoting=csv.QUOTE_ALL)
